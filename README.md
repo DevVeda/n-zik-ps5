@@ -4,7 +4,11 @@
 
 Your phone stays in charge (queue, library, search); the PS5 becomes its speaker. You control it from the phone or from the [Kabuki](https://github.com/stupiditytries/kabuki-ps5) overlay (L3 + R3), on top of any game. It also plays music saved on the console.
 
-<p align="center"><a href="https://ko-fi.com/DevVeda"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a></p>
+<p align="center"><img src="img/now-playing.png" width="24%" alt="Now Playing"> <img src="img/nzik.png" width="24%" alt="N-Zik: like, save offline, settings and the queue"> <img src="img/explore.png" width="24%" alt="Explore: a playlist from the phone's library"> <img src="img/music.png" width="24%" alt="Music: the console's queue and albums"></p>
+
+<p align="center"><sub>Sample songs and artists, made up for these screenshots.</sub></p>
+
+<p align="center">< href="https://ko-fi.com/DevVeda"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a></p>
 
 *[Español más abajo](#español).*
 
@@ -37,7 +41,7 @@ Needs a jailbroken PS5, [Payload Manager](https://github.com/itsPLK/ps5-payload-
 **Then:**
 1. Launch **Kabuki**, then **N-Zik PS5**, from Payload Manager.
 2. Press L3 + R3: **Now Playing** shows a QR.
-3. On the phone: N-Zik → PC bridge → turn on the server → Scan QR.
+3. On the phone, in N-Zik: tap your avatar → **PC Server** → **Start server** → **Pair**, and scan the QR.
 4. Play something on the phone: it plays on the PS5.
 
 To stop: N-Zik → Settings → **Quit N-Zik**. The sound goes back to the phone. Launching N-Zik PS5 again replaces the running copy. Its files are in `/data/n-zik-ps5/`.
@@ -62,7 +66,7 @@ make log PS5_HOST=<ps5-ip>
 
 ## Acknowledgements
 
-- [N-Zik](https://github.com/N-Zik-Group/N-Zik), for the app and its PC bridge, which this talks to. N-Zik PS5 is not affiliated with N-Zik.
+- [N-Zik](https://github.com/N-Zik-Group/N-Zik), for the app and its PC Server, which this talks to. N-Zik PS5 is not affiliated with N-Zik.
 - [stupiditytries](https://github.com/stupiditytries), for [Kabuki](https://github.com/stupiditytries/kabuki-ps5) and its provider protocol, and for [librespot-ps5](https://github.com/stupiditytries/librespot-ps5), which showed how to play audio over games from SceShellUI.
 - [ps5-payload-dev](https://github.com/ps5-payload-dev) and John Törnblom, for the PS5 payload SDK and [shsrv](https://github.com/ps5-payload-dev/shsrv).
 - [erickdavestech](https://github.com/erickdavestech), for [ps5-dualsense-overlay](https://github.com/erickdavestech/ps5-dualsense-overlay), whose injector we reuse.
@@ -114,7 +118,7 @@ Necesitas un PS5 con jailbreak, [Payload Manager](https://github.com/itsPLK/ps5-
 **Después:**
 1. Lanza **Kabuki** y luego **N-Zik PS5** desde Payload Manager.
 2. Pulsa L3 + R3: **Sonando** muestra un QR.
-3. En el teléfono: N-Zik → Puente PC → activar el servidor → Escanear QR.
+3. En el teléfono, en N-Zik: toca tu avatar → **PC Server** → **Start server** → **Pair**, y escanea el QR.
 4. Pon música en el teléfono: suena en el PS5.
 
 Para parar: N-Zik → Ajustes → **Cerrar N-Zik**. El sonido vuelve al teléfono. Lanzar N-Zik PS5 otra vez reemplaza la copia que corre. Sus archivos están en `/data/n-zik-ps5/`.

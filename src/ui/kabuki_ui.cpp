@@ -132,7 +132,7 @@ void KabukiUi::push_now(kabuki_client& k, const PlayerState& s) {
     std::string d = "{";
     if (!qr.empty()) { // pairing: the biggest picture Kabuki draws (286 px); a list header's is 48 px
         d += "\"title\":" + quote(TR("Scan with N-Zik", "Escanea con N-Zik")) + ",\"subtitle\":" +
-             quote(TR("Phone: N-Zik > PC bridge > Scan QR", "Telefono: N-Zik > Puente PC > Escanear QR"));
+             quote(TR("Phone: N-Zik > your avatar > PC Server > Start server > Pair", "Telefono: N-Zik > tu avatar > PC Server > Start server > Pair"));
         d += ",\"art\":" + quote(qr) + ",\"duration_ms\":0";
     } else if (t) {
         d += "\"title\":" + quote(t->title) + ",\"subtitle\":" + quote(t->artists);
@@ -245,7 +245,7 @@ void KabukiUi::push_library(kabuki_client& k, bool loading) {
     if (loading) d += ",\"loading\":true";
     else {
         d += ",\"empty\":{\"title\":" + quote(app.bridge.paired() ? TR("The phone is not answering", "El telefono no responde") : TR("No phone", "Sin telefono")) +
-             ",\"detail\":" + quote(TR("Open N-Zik on the phone and come back to this tab", "Abre N-Zik en el telefono y vuelve a esta pestana")) + "},\"rows\":[";
+             ",\"detail\":" + quote(TR("Start the PC Server in N-Zik on the phone and come back to this tab", "Inicia el PC Server de N-Zik en el telefono y vuelve a esta pestana")) + "},\"rows\":[";
         if (!lib_top.empty()) {
             static const char* const names[][2] = {{"Everything", "Todo"}, {"Playlists", "Playlists"}, {"Albums", "Albumes"},
                                                    {"Artists", "Artistas"}, {"Songs", "Canciones"}};

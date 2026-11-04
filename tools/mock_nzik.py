@@ -40,6 +40,9 @@ class MockPhone:
         self.output = 'phone'
         self.sockets = []
         self.ws_connected = threading.Event()
+        # The library's one playlist (all tracks) and one album (the first track); names only.
+        self.playlist_name = 'Mi playlist'
+        self.album_title, self.album_artist = 'Album Uno', 'Artista'
         phone = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -85,11 +88,11 @@ class MockPhone:
                     if route == 'songs/recommendations':
                         return self.send_json(200, {'filter': None, 'items': [{'position': i, 'track': t} for i, t in enumerate(tracks)]})
                     if route == 'playlists':
-                        return self.send_json(200, page([{'id': '7', 'name': 'Mi playlist', 'trackCount': len(tracks), 'artworkTrackId': None}]))
+                        return self.send_json(200, page([{'id': '7', 'name': phone.playlist_name, 'trackCount': len(tracks), 'artworkTrackId': None}]))
                     if route == 'playlists/7/songs':
                         return self.send_json(200, page(tracks))
                     if route == 'albums':  # song1 is on an album; the others are singles
-                        return self.send_json(200, page([{'id': 'al1', 'title': 'Album Uno', 'artists': 'Artista', 'year': None,
+                        return self.send_json(200, page([{'id': 'al1', 'title': phone.album_title, 'artists': phone.album_artist, 'year': None,
                                                           'trackCount': 1, 'hasArtwork': False}]))
                     if route == 'albums/al1/songs':
                         return self.send_json(200, page(tracks[:1]))

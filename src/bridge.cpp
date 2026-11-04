@@ -197,7 +197,7 @@ void Bridge::run() {
             if (now_ms() - missing_since >= 60000) lost = true;
         }
         if (ws.fd < 0) {
-            problem(status == 409 ? TR("Another device is using the N-Zik bridge", "Otro dispositivo usa el puente de N-Zik") : TR("Open N-Zik and turn on the PC bridge on your phone", "Abre N-Zik y activa el puente PC en el telefono"));
+            problem(status == 409 ? TR("Another device is using the N-Zik bridge", "Otro dispositivo usa el puente de N-Zik") : TR("On the phone: N-Zik > your avatar > PC Server > Start server", "En el telefono: N-Zik > tu avatar > PC Server > Start server"));
             sleep(attempt++ < 5 ? 2 : 5);
             continue;
         }
