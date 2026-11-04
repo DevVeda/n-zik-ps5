@@ -1,0 +1,58 @@
+# Push a tag (git tag v0.1.0 && git push origin v0.1.0): runs the host tests, builds n-zik-ps5.elf
+# and attaches it to that tag's GitHub release (created as a draft if missing), with the Payload
+# Manager catalog repo.json (this version, its SHA-256). Users add
+# https://github.com/DevVeda/n-zik-ps5/releases/latest/download/repo.json once; it follows the
+# latest published release.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: version matches tag
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME" || { echo "VERSION ($(cat VERSION)) does not match tag $GITHUB_REF_NAME"; exit 1; }
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 pkg-config python3 jq ffmpeg \
+            libavformat-dev libavcodec-dev libswresample-dev libavutil-dev
+          # PS5 payload SDK, pinned (the version Kabuki builds with)
+          curl -fsSL -o sdk.zip https://github.com/ps5-payload-dev/sdk/releases/download/v0.44/ps5-payload-sdk.zip
+          echo "4d06eab777bb135705b5a6816688c9132efb246093fe606ac488ab6cf65ca5b0  sdk.zip" | sha256sum -c
+          unzip -q sdk.zip -d "$HOME" && rm sdk.zip
+          echo "SDK=$HOME/ps5-payload-sdk" >> "$GITHUB_ENV"
+          echo "PS5_PAYLOAD_SDK=$HOME/ps5-payload-sdk" >> "$GITHUB_ENV"
+          echo "LLVM_CONFIG=/usr/bin/llvm-config-18" >> "$GITHUB_ENV"
+      - name: host tests
+        run: make test
+      - name: ffmpeg for the console
+        run: |
+          git clone --depth 1 --branch n7.1.1 https://github.com/FFmpeg/FFmpeg.git "$HOME/ffmpeg"
+          FFMPEG_SRC="$HOME/ffmpeg" bash tools/build-ffmpeg.sh
+      - name: payload
+        run: |
+          make ps5
+          size=$(stat -c %s build/n-zik-ps5.elf)
+          test "$size" -le 2097152 || { echo "n-zik-ps5.elf is $size bytes: payloads over 2 MiB fail to start"; exit 1; }
+      - name: payload manager catalog
+        run: |
+          jq -n --arg v "$GITHUB_REF_NAME" --arg d "$(date -u +%F)" --arg sum "$(sha256sum build/n-zik-ps5.elf | cut -d' ' -f1)" '{
+            name: "N-Zik PS5",
+            payloads: [{ id: "n-zik-ps5", name: "N-Zik PS5", filename: "n-zik-ps5.elf",
+              url: "https://github.com/DevVeda/n-zik-ps5/releases/download/\($v)/n-zik-ps5.elf",
+              version: $v, last_update: $d, checksum: $sum, category: "Media",
+              description: "Companion app for N-Zik: your phone music plays on the PS5 while you play, controlled from Kabuki.",
+              author: "DevVeda", source: "https://github.com/DevVeda/n-zik-ps5",
+              details_url: "https://github.com/DevVeda/n-zik-ps5#readme" }]
+          }' > build/repo.json
+      - name: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --title "N-Zik PS5 $GITHUB_REF_NAME" --notes ""
+          gh release upload "$GITHUB_REF_NAME" build/n-zik-ps5.elf build/repo.json --clobber

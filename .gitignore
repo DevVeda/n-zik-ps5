@@ -1,0 +1,6 @@
+build/
+*.log
+local.mk
+.claude/
+docs/
+CLAUDE.md
