@@ -67,7 +67,9 @@ Track read_track(const json::Doc& d, int i) {
     t.artists = d.str(d.get(i, "artists"));
     t.duration_ms = d.num(d.get(i, "durationMs"), -1);
     t.has_art = d.boolean(d.get(i, "hasArtwork"));
-    t.liked = d.str(d.get(i, "like")) == "liked";
+    const std::string like = d.str(d.get(i, "like"));
+    t.liked = like == "liked";
+    t.disliked = like == "disliked";
     return t;
 }
 void read_tracks(const json::Doc& d, int arr, std::vector<Track>& out) {

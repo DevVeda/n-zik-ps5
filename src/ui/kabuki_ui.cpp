@@ -35,30 +35,61 @@ static std::string nav(bool sub, const std::string& extra = "") {
     const char* keys = sub ? TR("○ Back", "○ Atras") : TR("→ Tiles   ○ Close", "→ Pestanas   ○ Cerrar");
     return std::string(keys) + (extra.empty() ? "" : "   ·   " + extra);
 }
-static std::string song_rows(const std::vector<Track>& songs, std::size_t max = 300) {
-    std::string d;
+// A list row and a list level, as Kabuki's `list` card takes them (protocol: `level`, `rows`).
+// Rows are replaced as a whole, so a row leaves out what it doesn't have; a level always says its
+// art and heading, or Kabuki would keep the previous sublist's.
+struct Row {
+    std::string key, title, subtitle, art;
+    bool opens = false;
+};
+static std::string json_of(const Row& r) {
+    std::string d = "{\"key\":" + quote(r.key) + ",\"title\":" + quote(r.title);
+    if (!r.subtitle.empty()) d += ",\"subtitle\":" + quote(r.subtitle);
+    if (!r.art.empty()) d += ",\"art\":" + quote(r.art);
+    return d + (r.opens ? ",\"opens\":true}" : "}");
+}
+struct Level {
+    std::string title, heading, art;
+    bool covers = false, loading = false;
+    std::string empty_title, empty_detail; // shown when there are no rows
+    std::vector<Row> rows;
+};
+static std::string json_of(const Level& l) {
+    std::string d = "{\"title\":" + quote(l.title) + ",\"heading\":" + quote(l.heading) + ",\"art\":" + (l.art.empty() ? "null" : quote(l.art));
+    d += std::string(",\"covers\":") + (l.covers ? "true" : "false");
+    if (l.loading) d += ",\"loading\":true";
+    if (!l.empty_title.empty()) d += ",\"empty\":{\"title\":" + quote(l.empty_title) + ",\"detail\":" + quote(l.empty_detail) + "}";
+    d += ",\"rows\":[";
+    for (std::size_t i = 0; i < l.rows.size(); ++i) d += (i ? "," : "") + json_of(l.rows[i]);
+    return d + "]}";
+}
+// A whole list tile: its top level and, while one is open, a sublist.
+static void send_list(kabuki_client& k, const char* tile, const std::string& session, const Level& top, const std::string& sub_key = "",
+                      const Level* sub = nullptr, const std::string& busy = "") {
+    std::string d = "{\"session\":" + quote(session) + ",\"busy\":" + (busy.empty() ? "null" : quote(busy)) + ",\"top\":" + json_of(top);
+    d += sub ? ",\"sub_key\":" + quote(sub_key) + ",\"sub\":" + json_of(*sub) : std::string(",\"sub_key\":null");
+    kabuki_content(&k, tile, (d + "}").c_str());
+}
+static void add_songs(std::vector<Row>& rows, const std::vector<Track>& songs, std::size_t max = 300) {
     for (std::size_t i = 0; i < songs.size() && i < max; ++i) {
         std::string sub = songs[i].artists;
         if (songs[i].duration_ms > 0) sub += (sub.empty() ? "" : "  ·  ") + duration(songs[i].duration_ms);
-        d += (d.empty() ? "" : ",") + std::string("{\"key\":") + quote(std::to_string(i)) + ",\"title\":" + quote(songs[i].title) +
-             ",\"subtitle\":" + quote(sub) + "}";
+        rows.push_back({std::to_string(i), songs[i].title, sub});
     }
-    return d;
 }
-
+// A row that cycles a choice: "<label><choice>", with how to change it underneath.
+static Row choice_row(const char* key, const char* label, const char* choice, const char* hint) { return {key, std::string(label) + choice, hint}; }
 
 // UI rule: every sublist goes back with Circle. Kabuki keeps the cursor in an opened list only
 // while it loads or has rows (native_model.hpp, enterable); an empty one loses it and Circle then
 // closes the whole panel. So an opened list is never empty: this row stands in, and selecting it
 // starts a new session, which closes the list.
-static std::string back_row(const char* why_en, const char* why_es) {
-    return "{\"key\":\"back\",\"title\":" + quote(TR("← Back", "← Volver")) + ",\"subtitle\":" + quote(TR(why_en, why_es)) + "}";
-}
+static Row back_row(const char* why_en, const char* why_es) { return {"back", TR("← Back", "← Volver"), TR(why_en, why_es)}; }
 
-std::string KabukiUi::mode_row() {
+Row KabukiUi::mode_row() {
     static const char* const names[][2] = {{"Play", "Reproducir"}, {"Play next", "Reproducir siguiente"}, {"Add to the end", "Agregar al final"}};
-    return "{\"key\":\"addmode\",\"title\":" + quote(std::string("✕: ") + TR(names[add_mode][0], names[add_mode][1])) +
-           ",\"subtitle\":" + quote(TR("Cross here changes what Cross does on a song", "Cross aqui cambia lo que hace Cross en una cancion")) + "}";
+    return choice_row("addmode", "✕: ", TR(names[add_mode][0], names[add_mode][1]),
+                      TR("Cross here changes what Cross does on a song", "Cross aqui cambia lo que hace Cross en una cancion"));
 }
 
 // A phone song chosen in Explore: play the list from it, or put just that song in the phone's queue.
@@ -148,7 +179,7 @@ void KabukiUi::push_now(kabuki_client& k, const PlayerState& s) {
     std::string note = app.player.status();
     if (!qr.empty()) note = status;
     else if (app.local.active()) note = TR("On the console  ·  ", "En la consola  ·  ") + note;
-    else if (s.connected && s.output != "pc") note = "Pasando el audio al PS5...";
+    else if (s.connected && s.output != "pc") note = TR("Moving the audio to the PS5...", "Pasando el audio al PS5...");
     d += ",\"note\":" + quote(note);
     d += ",\"position_ms\":" + std::to_string(t ? s.position_now(now) : 0);
     d += std::string(",\"moving\":") + (t && s.playing ? "true" : "false");
@@ -161,14 +192,15 @@ void KabukiUi::push_now(kabuki_client& k, const PlayerState& s) {
     kabuki_content(&k, "NZKNOW", d.c_str());
 }
 
-bool KabukiUi::is_liked(const Track& t) {
-    const auto own = liked.find(t.id);
-    return own != liked.end() ? own->second : t.liked;
+std::string KabukiUi::like_of(const Track& t) {
+    for (const auto& [id, state] : like_state) if (id == t.id) return state;
+    return t.liked ? "liked" : t.disliked ? "disliked" : "neutral";
 }
-void KabukiUi::toggle_like(const Track& t) {
-    const bool on = !is_liked(t);
-    if (app.bridge.command(("library/songs/" + t.id + "/like").c_str(), std::string("{\"state\":\"") + (on ? "liked" : "neutral") + "\"}") == 200)
-        liked[t.id] = on;
+void KabukiUi::toggle_like(const Track& t, const char* state) {
+    const std::string next = like_of(t) == state ? "neutral" : state;
+    if (app.bridge.command(("library/songs/" + t.id + "/like").c_str(), "{\"state\":\"" + next + "\"}") != 200) return;
+    for (auto& [id, state] : like_state) if (id == t.id) { state = next; return; }
+    like_state.emplace_back(t.id, next);
 }
 const char* KabukiUi::offline_title(const Track& t) {
     return offline::busy(t.id) ? TR("Saving offline...", "Guardando offline...")
@@ -178,47 +210,50 @@ const char* KabukiUi::offline_title(const Track& t) {
 std::string KabukiUi::offline_row(const PlayerState& s) {
     const Track* t = s.current();
     if (!t || app.local.active()) return "";
-    return "{\"key\":\"offline\",\"title\":" + quote(offline_title(*t)) + ",\"subtitle\":" +
-           quote(TR("On the console: Music > ", "En la consola: Musica > ") + offline::clean(t->artists)) + "}";
+    return offline_title(*t) + std::string("|") + t->artists; // what the row shows, to notice when it changes
 }
 
-std::string KabukiUi::settings_rows(const PlayerState& s) {
+std::vector<Row> KabukiUi::settings_rows() {
     const bool paired = app.bridge.paired();
     const PlayerState phone = app.bridge.snapshot();
-    std::string conn = phone.connected ? TR("Connected", "Conectado") : paired ? phone.problem : TR("Not paired", "Sin emparejar");
-    auto row = [](const char* key, const std::string& title, const std::string& subtitle) {
-        return std::string("{\"key\":\"") + key + "\",\"title\":" + quote(title) + ",\"subtitle\":" + quote(subtitle) + "},";
+    const std::string conn = phone.connected ? TR("Connected", "Conectado") : paired ? phone.problem : TR("Not paired", "Sin emparejar");
+    std::vector<Row> rows{
+        {"status", TR("Phone: ", "Telefono: ") + conn, app.player.status()},
+        {"pair", paired ? TR("Pair another phone", "Emparejar otro telefono") : TR("Pair phone", "Emparejar telefono"),
+         TR("Shows a QR in Now Playing", "Muestra un QR en Sonando")},
+        choice_row("quality", TR("Quality: ", "Calidad: "), app.player.low_quality ? TR("low", "baja") : TR("high", "alta"),
+                   TR("Low uses less Wi-Fi", "Baja usa menos Wi-Fi")),
+        choice_row("toasts", TR("Song notices: ", "Avisos de cancion: "), app.player.song_toasts ? TR("on", "si") : TR("off", "no"),
+                   TR("A notification when each song starts", "Notificacion al empezar cada cancion")),
+        {"mode", std::string(TR("Audio mode: ", "Modo de audio: ")) + ownership_name(app.config.ownership), app.audio_info},
     };
-    std::string d = row("status", TR("Phone: ", "Telefono: ") + conn, app.player.status());
-    d += row("pair", paired ? TR("Pair another phone", "Emparejar otro telefono") : TR("Pair phone", "Emparejar telefono"),
-             TR("Shows a QR in Now Playing", "Muestra un QR en Sonando"));
-    d += row("quality", std::string(TR("Quality: ", "Calidad: ")) + (app.player.low_quality ? TR("low", "baja") : TR("high", "alta")),
-             TR("Low uses less Wi-Fi", "Baja usa menos Wi-Fi"));
-    d += row("toasts", std::string(TR("Song notices: ", "Avisos de cancion: ")) + (app.player.song_toasts ? TR("on", "si") : TR("off", "no")),
-             TR("A notification when each song starts", "Notificacion al empezar cada cancion"));
-    d += "{\"key\":\"mode\",\"title\":" + quote(std::string(TR("Audio mode: ", "Modo de audio: ")) + ownership_name(app.config.ownership)) +
-         ",\"subtitle\":" + quote(app.audio_info) + "},";
-    if (paired) d += row("forget", TR("Forget this phone", "Olvidar este telefono"), "");
-    d += row("quit", TR("Quit N-Zik", "Cerrar N-Zik"), TR("Stops the music and the payload", "Detiene la musica y el payload"));
-    d.pop_back(); // the last comma
-    (void)s;
-    return d;
+    if (!phone.queue.empty()) {
+        const bool armed = clear_armed && now_ms() - clear_armed < 5000;
+        rows.push_back({"clear", armed ? TR("Cross again to clear the queue", "Cross otra vez para vaciar la cola") : TR("Clear the queue", "Vaciar la cola"),
+                        std::to_string(phone.queue.size()) + TR(" songs, on the phone too", " canciones, tambien en el telefono")});
+    }
+    if (paired) rows.push_back({"forget", TR("Forget this phone", "Olvidar este telefono")});
+    rows.push_back({"quit", TR("Quit N-Zik", "Cerrar N-Zik"), TR("Stops the music and the payload", "Detiene la musica y el payload")});
+    return rows;
 }
 
 void KabukiUi::push_queue(kabuki_client& k, const PlayerState& s) {
     const bool on_console = app.local.active();
-    std::string d = "{\"session\":" + quote(session) + ",\"busy\":" + (busy_key.empty() ? std::string("null") : quote(busy_key)) +
-                    ",\"top\":{\"title\":\"N-Zik\",\"covers\":false";
-    d += ",\"heading\":" + quote(nav(false, s.queue.empty() ? "" : std::to_string(s.queue.size()) +
-                                       (on_console ? TR(" songs on the console", " canciones en la consola") : TR(" songs in the queue", " canciones en la cola"))));
-    d += ",\"rows\":[";
-    if (const Track* t = on_console ? nullptr : s.current()) { // the like button for the song that's playing
-        const bool on = is_liked(*t);
-        d += "{\"key\":\"like\",\"title\":" + quote(on ? TR("Liked  (Cross to undo)", "Te gusta  (Cross para quitar)") : TR("Like", "Me gusta")) + ",\"subtitle\":" + quote(t->title) + "},";
-        d += offline_row(s) + ",";
+    Level top{"N-Zik", nav(false, s.queue.empty() ? "" : std::to_string(s.queue.size()) +
+                                    (on_console ? TR(" songs on the console", " canciones en la consola") : TR(" songs in the queue", " canciones en la cola")))};
+    if (const Track* t = on_console ? nullptr : s.current()) { // like, dislike and save the song that's playing
+        const std::string like = like_of(*t);
+        top.rows.push_back({"like", like == "liked" ? TR("Liked  (Cross to undo)", "Te gusta  (Cross para quitar)") : TR("Like", "Me gusta"), t->title});
+        top.rows.push_back({"dislike", like == "disliked" ? TR("Disliked  (Cross to undo)", "No te gusta  (Cross para quitar)") : TR("Dislike", "No me gusta"),
+                            TR("N-Zik plays it less", "N-Zik la pondra menos")});
+        top.rows.push_back({"offline", offline_title(*t), TR("On the console: Music > ", "En la consola: Musica > ") + offline::clean(t->artists)});
     }
-    d += "{\"key\":\"settings\",\"title\":" + quote(TR("Settings", "Ajustes")) + ",\"subtitle\":" +
-         quote(TR("Phone, quality, notices, audio mode", "Telefono, calidad, avisos, modo de audio")) + ",\"opens\":true}";
+    top.rows.push_back({"settings", TR("Settings", "Ajustes"), TR("Phone, quality, notices, audio mode", "Telefono, calidad, avisos, modo de audio"), "", true});
+    if (!on_console && !s.queue.empty()) {
+        static const char* const modes[][2] = {{"Jump to it", "Saltar a ella"}, {"Remove it", "Quitarla"}, {"Move it up", "Subirla"}, {"Move it down", "Bajarla"}};
+        top.rows.push_back(choice_row("qmode", TR("✕ on a song: ", "✕ en una cancion: "), TR(modes[queue_mode][0], modes[queue_mode][1]),
+                                      TR("Cross here changes it", "Cross aqui lo cambia")));
+    }
     // Kabuki shows up to 500 rows (and lines up to 64 KiB): the current song and what follows matter most.
     const int max = 300;
     const int from = int(s.queue.size()) > max && s.current_index > 0 ? std::min(s.current_index, int(s.queue.size()) - max) : 0;
@@ -227,106 +262,166 @@ void KabukiUi::push_queue(kabuki_client& k, const PlayerState& s) {
         std::string sub = t.artists;
         if (t.duration_ms > 0) sub += (sub.empty() ? "" : "  ·  ") + duration(t.duration_ms);
         if (i == s.current_index) sub = TR("Playing  ·  ", "Sonando  ·  ") + sub;
-        d += std::string(",{\"key\":") + quote(std::to_string(i) + "|" + (on_console ? std::string("local") : t.id)) + ",\"title\":" + quote(t.title) +
-             ",\"subtitle\":" + quote(sub) + "}";
+        top.rows.push_back({std::to_string(i) + "|" + (on_console ? std::string("local") : t.id), t.title, sub});
     }
-    d += "]}";
-    if (settings_open)
-        d += ",\"sub_key\":\"settings\",\"sub\":{\"title\":" + quote(TR("Settings", "Ajustes")) + ",\"heading\":" + quote(nav(true)) +
-             ",\"covers\":false,\"rows\":[" + settings_rows(s) + "]}";
-    else d += ",\"sub_key\":null";
-    d += "}";
-    kabuki_content(&k, "NZKQUE", d.c_str());
+    Level settings{TR("Settings", "Ajustes"), nav(true)};
+    if (settings_open) settings.rows = settings_rows();
+    send_list(k, "NZKQUE", session, top, "settings", settings_open ? &settings : nullptr, busy_key);
+}
+
+library::Entry* KabukiUi::entry(const std::string& key) {
+    for (auto& e : lib_top) if (e.key == key) return &e;
+    return nullptr;
+}
+
+static std::string cover_base(const std::string& key) {
+    std::string name = "lib-";
+    for (const char c : key) name += std::isalnum((unsigned char)c) || c == '-' || c == '_' ? c : '_';
+    return paths::art + "/" + name;
+}
+std::string KabukiUi::lib_cover(const std::string& key) {
+    for (const char* ext : {".jpg", ".png"})
+        if (access((cover_base(key) + ext).c_str(), R_OK) == 0) return cover_base(key) + ext;
+    return "";
+}
+void KabukiUi::fetch_cover(kabuki_client& k) {
+    const std::string key = covers_todo.back();
+    covers_todo.pop_back();
+    std::string bytes;
+    const library::Entry* e = entry(key);
+    if (e && library::artwork(app.bridge, *e, 128, bytes) && bytes.size() > 4) {
+        const bool png = bytes.compare(0, 4, "\x89PNG") == 0, jpg = bytes.compare(0, 2, "\xff\xd8") == 0;
+        const std::string path = cover_base(key) + (png ? ".png" : ".jpg");
+        if (png || jpg)
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                const bool ok = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+                if (std::fclose(f) != 0 || !ok) std::remove(path.c_str());
+            }
+    }
+    if (covers_todo.empty() || covers_todo.size() % 8 == 0) push_library(k); // show them in batches
 }
 
 void KabukiUi::push_library(kabuki_client& k, bool loading) {
-    std::string d = "{\"session\":" + quote(session + "." + std::to_string(lib_back)) +
-                    ",\"top\":{\"title\":" + quote(TR("Explore", "Explorar")) + ",\"heading\":" + quote(nav(false)) + ",\"covers\":false";
-    if (loading) d += ",\"loading\":true";
-    else {
-        d += ",\"empty\":{\"title\":" + quote(app.bridge.paired() ? TR("The phone is not answering", "El telefono no responde") : TR("No phone", "Sin telefono")) +
-             ",\"detail\":" + quote(TR("Start the PC Server in N-Zik on the phone and come back to this tab", "Inicia el PC Server de N-Zik en el telefono y vuelve a esta pestana")) + "},\"rows\":[";
-        if (!lib_top.empty()) {
-            static const char* const names[][2] = {{"Everything", "Todo"}, {"Playlists", "Playlists"}, {"Albums", "Albumes"},
-                                                   {"Artists", "Artistas"}, {"Songs", "Canciones"}};
-            d += "{\"key\":\"view\",\"title\":" + quote(std::string(TR("Show: ", "Ver: ")) + TR(names[lib_view][0], names[lib_view][1])) +
-                 ",\"subtitle\":" + quote(TR("Cross: everything, playlists, albums, artists, songs", "Cross: todo, playlists, albumes, artistas, canciones")) + "}";
-        }
-        if (lib_top.empty()) { // the phone didn't answer: just the empty notice
-        } else if (lib_view == 4) {
-            d += "," + mode_row();
-            const std::string rows = song_rows(all_songs, 400);
-            if (!rows.empty()) d += "," + rows;
+    Level top{TR("Explore", "Explorar"), nav(false)};
+    top.covers = lib_view != 4;
+    top.loading = loading;
+    if (!loading) {
+        top.empty_title = app.bridge.paired() ? TR("The phone is not answering", "El telefono no responde") : TR("No phone", "Sin telefono");
+        top.empty_detail = TR("Start the PC Server in N-Zik on the phone and come back to this tab", "Inicia el PC Server de N-Zik en el telefono y vuelve a esta pestana");
+    }
+    if (!loading && !lib_top.empty()) { // the phone didn't answer: just the empty notice
+        static const char* const names[][2] = {{"Everything", "Todo"}, {"Playlists", "Playlists"}, {"Albums", "Albumes"}, {"Artists", "Artistas"}, {"Songs", "Canciones"}};
+        top.rows.push_back(choice_row("view", TR("Show: ", "Ver: "), TR(names[lib_view][0], names[lib_view][1]),
+                                      TR("Cross: everything, playlists, albums, artists, songs", "Cross: todo, playlists, albumes, artistas, canciones")));
+        if (lib_view == 4) {
+            top.rows.push_back(mode_row());
+            add_songs(top.rows, all_songs, 400);
         } else {
             const char prefix = " par"[lib_view]; // the entries of one kind: p: playlists, a: albums, r: artists
-            for (std::size_t i = 0, shown = 0; i < lib_top.size() && shown < 480; ++i) {
-                if (lib_view && !(lib_top[i].key.size() > 1 && lib_top[i].key[0] == prefix && lib_top[i].key[1] == ':')) continue;
-                d += std::string(",{\"key\":") + quote(lib_top[i].key) + ",\"title\":" + quote(lib_top[i].title) +
-                     ",\"subtitle\":" + quote(lib_top[i].subtitle) + ",\"opens\":true}";
-                ++shown;
+            for (const auto& e : lib_top) {
+                if (top.rows.size() > 480) break;
+                if (lib_view && !(e.key.size() > 1 && e.key[0] == prefix && e.key[1] == ':')) continue;
+                top.rows.push_back({e.key, e.title, e.subtitle, lib_cover(e.key), true});
             }
         }
-        d += "]";
     }
-    d += "}";
-    if (!lib_key.empty()) {
-        std::string title;
-        for (const auto& e : lib_top) if (e.key == lib_key) title = e.title;
-        d += ",\"sub_key\":" + quote(lib_key) + ",\"sub\":{\"title\":" + quote(title) + ",\"heading\":" + quote(nav(true)) + ",\"covers\":false";
-        if (lib_fetching) d += ",\"loading\":true";
-        d += ",\"rows\":[";
-        // Never an empty list: it can't hold the focus, and then Circle closes the panel instead.
-        if (lib_songs.empty() && !lib_fetching)
-            d += back_row("No songs here, or the phone did not answer", "Aqui no hay canciones, o el telefono no respondio");
-        if (!lib_songs.empty()) d += mode_row() + ",";
-        if (!lib_songs.empty())
-            d += "{\"key\":\"shuffle\",\"title\":" + quote(TR("Shuffle", "Aleatorio")) + ",\"subtitle\":" +
-                 quote(std::to_string(lib_songs.size()) + TR(" songs", " canciones")) + "},";
-        d += song_rows(lib_songs);
-        if (d.back() == ',') d.pop_back();
-        d += "]}";
-    } else d += ",\"sub_key\":null";
-    d += "}";
-    kabuki_content(&k, "NZKLIB", d.c_str());
+    if (lib_key.empty()) return send_list(k, "NZKLIB", session + "." + std::to_string(lib_back), top);
+    const library::Entry* e = entry(lib_key);
+    Level sub{e ? e->title : "", nav(true)};
+    sub.loading = lib_fetching;
+    // Never an empty list: it can't hold the focus, and then Circle closes the panel instead.
+    if (lib_songs.empty() && !lib_fetching) sub.rows.push_back(back_row("No songs here, or the phone did not answer", "Aqui no hay canciones, o el telefono no respondio"));
+    // Save / follow / pin the opened playlist, album or artist (the phone's own toggles).
+    if (e && !lib_fetching && e->key.size() > 2 && e->key[1] == ':') {
+        const char kind = e->key[0];
+        const char* save = kind == 'r' ? (e->saved ? TR("Following  (Cross to undo)", "Siguiendo  (Cross para dejar)") : TR("Follow artist", "Seguir artista"))
+                         : kind == 'a' ? (e->saved ? TR("Album saved  (Cross to undo)", "Album guardado  (Cross para quitar)") : TR("Save album", "Guardar album"))
+                                       : (e->saved ? TR("Playlist saved  (Cross to undo)", "Playlist guardada  (Cross para quitar)") : TR("Save playlist", "Guardar playlist"));
+        sub.rows.push_back({"flag:save", save, TR("In N-Zik's library", "En la biblioteca de N-Zik")});
+        if (kind == 'p')
+            sub.rows.push_back({"flag:pin", e->pinned ? TR("Pinned  (Cross to undo)", "Fijada  (Cross para quitar)") : TR("Pin playlist", "Fijar playlist"),
+                                TR("At the top of N-Zik's playlists", "Arriba en las playlists de N-Zik")});
+    }
+    if (!lib_songs.empty()) {
+        sub.rows.push_back(mode_row());
+        sub.rows.push_back({"shuffle", TR("Shuffle", "Aleatorio"), std::to_string(lib_songs.size()) + TR(" songs", " canciones")});
+        add_songs(sub.rows, lib_songs);
+    }
+    send_list(k, "NZKLIB", session + "." + std::to_string(lib_back), top, lib_key, &sub);
+}
+
+void KabukiUi::refresh_local() {
+    albums = local::albums();
+    loc_artists.clear();
+    for (const auto& a : albums)
+        if (!a.artist.empty() && std::find(loc_artists.begin(), loc_artists.end(), a.artist) == loc_artists.end()) loc_artists.push_back(a.artist);
+    std::sort(loc_artists.begin(), loc_artists.end());
+    loc_all.clear();
+    if (loc_view == 2) {
+        for (const auto& a : albums) for (auto& t : local::songs(a.dir)) loc_all.push_back(std::move(t));
+        std::sort(loc_all.begin(), loc_all.end(), [](const Track& x, const Track& y) { return x.title < y.title; });
+    }
+    if (album >= int(albums.size())) album = -1;
+    if (loc_artist >= int(loc_artists.size())) loc_artist = -1;
 }
 
 void KabukiUi::push_local(kabuki_client& k) {
-    std::string d = "{\"session\":" + quote(session + "." + std::to_string(loc_back)) +
-                    ",\"top\":{\"title\":" + quote(TR("Music on the console", "Musica en la consola")) + ",\"heading\":" + quote(nav(false)) + ",\"covers\":true";
-    d += ",\"empty\":{\"title\":" + quote(TR("No music in /data/music", "No hay musica en /data/music")) + ",\"detail\":" +
-         quote(TR("Copy Artist/Album folders by FTP, or use Save offline in N-Zik", "Copia carpetas Artista/Album por FTP, o usa Guardar offline en N-Zik")) + "},\"rows\":[";
+    Level top{TR("Music on the console", "Musica en la consola"), nav(false)};
+    top.covers = true;
+    top.empty_title = TR("No music in /data/music", "No hay musica en /data/music");
+    top.empty_detail = TR("Copy Artist/Album folders by FTP, or use Save offline in N-Zik", "Copia carpetas Artista/Album por FTP, o usa Guardar offline en N-Zik");
     const PlayerState q = app.local.snapshot();
-    const bool has_queue = app.local.active() && !q.queue.empty();
-    if (has_queue) {
+    if (app.local.active() && !q.queue.empty()) {
         const Track* t = q.current();
-        d += "{\"key\":\"queue\",\"title\":" + quote(TR("Console queue", "Cola de la consola")) + ",\"subtitle\":" +
-             quote(std::to_string(q.queue.size()) + TR(" songs", " canciones") + (t ? "  ·  " + t->title : std::string())) + ",\"opens\":true}";
+        top.rows.push_back({"queue", TR("Console queue", "Cola de la consola"),
+                            std::to_string(q.queue.size()) + TR(" songs", " canciones") + (t ? "  ·  " + t->title : std::string()), "", true});
     }
-    for (std::size_t i = 0; i < albums.size() && i < 480; ++i) {
-        const std::string art = local::cover(albums[i].dir);
-        d += (i || has_queue ? "," : "") + std::string("{\"key\":") + quote(std::to_string(i)) + ",\"title\":" + quote(albums[i].title) +
-             ",\"subtitle\":" + quote(albums[i].artist) + ",\"art\":" + (art.empty() ? std::string("null") : quote(art)) + ",\"opens\":true}";
+    if (!albums.empty()) {
+        static const char* const names[][2] = {{"Albums", "Albumes"}, {"Artists", "Artistas"}, {"Songs", "Canciones"}};
+        top.rows.push_back(choice_row("view", TR("Show: ", "Ver: "), TR(names[loc_view][0], names[loc_view][1]),
+                                      TR("Cross: albums, artists, songs", "Cross: albumes, artistas, canciones")));
     }
-    d += "]}";
-    if (queue_open) {
-        std::string rows;
-        for (std::size_t i = 0; i < q.queue.size() && i < 400; ++i) {
-            std::string sub = q.queue[i].artists;
-            if (int(i) == q.current_index) sub = TR("Playing  ·  ", "Sonando  ·  ") + sub;
-            rows += (rows.empty() ? "" : ",") + std::string("{\"key\":") + quote(std::to_string(i)) + ",\"title\":" + quote(q.queue[i].title) +
-                    ",\"subtitle\":" + quote(sub) + "}";
+    if (loc_view == 0)
+        for (std::size_t i = 0; i < albums.size() && i < 480; ++i)
+            top.rows.push_back({std::to_string(i), albums[i].title, albums[i].artist, local::cover(albums[i].dir), true});
+    else if (loc_view == 1)
+        for (std::size_t i = 0; i < loc_artists.size() && i < 480; ++i) {
+            int count = 0;
+            std::string art;
+            for (const auto& a : albums)
+                if (a.artist == loc_artists[i]) { ++count; if (art.empty()) art = local::cover(a.dir); }
+            top.rows.push_back({"r:" + std::to_string(i), loc_artists[i], std::to_string(count) + (count == 1 ? TR(" album", " album") : TR(" albums", " albumes")), art, true});
         }
-        d += ",\"sub_key\":\"queue\",\"sub\":{\"title\":" + quote(TR("Console queue", "Cola de la consola")) + ",\"heading\":" + quote(nav(true)) +
-             ",\"covers\":false,\"rows\":[" + (rows.empty() ? back_row("Nothing is playing on the console", "No suena nada en la consola") : rows) + "]}";
-    } else if (album >= 0 && album < int(albums.size())) {
-        const std::string art = local::cover(albums[std::size_t(album)].dir);
-        d += ",\"sub_key\":" + quote(std::to_string(album)) + ",\"sub\":{\"title\":" + quote(albums[std::size_t(album)].title) +
-             ",\"art\":" + (art.empty() ? std::string("null") : quote(art)) + ",\"heading\":" + quote(nav(true)) + ",\"covers\":false,\"rows\":[" +
-             (album_songs.empty() ? back_row("The songs are gone from this folder", "Las canciones ya no estan en esta carpeta")
-                                  : mode_row() + "," + song_rows(album_songs)) + "]}";
-    } else d += ",\"sub_key\":null";
-    d += "}";
-    kabuki_content(&k, "NZKLOC", d.c_str());
+    else if (!albums.empty()) {
+        top.rows.push_back(mode_row());
+        for (std::size_t i = 0; i < loc_all.size() && i < 400; ++i)
+            top.rows.push_back({"s:" + std::to_string(i), loc_all[i].title, loc_all[i].artists, local::cover(loc_all[i].id.substr(0, loc_all[i].id.rfind('/')))});
+    }
+    const std::string session_key = session + "." + std::to_string(loc_back);
+    const char* gone_en = "The songs are gone from this folder";
+    const char* gone_es = "Las canciones ya no estan en esta carpeta";
+    const auto song_list = [&](const std::string& key, const std::string& title, const std::string& art, const std::vector<Track>& songs) {
+        Level sub{title, nav(true), art};
+        if (songs.empty()) sub.rows.push_back(back_row(gone_en, gone_es));
+        else {
+            sub.rows.push_back(mode_row());
+            add_songs(sub.rows, songs);
+        }
+        send_list(k, "NZKLOC", session_key, top, key, &sub);
+    };
+    if (queue_open) {
+        Level sub{TR("Console queue", "Cola de la consola"), nav(true)};
+        for (std::size_t i = 0; i < q.queue.size() && i < 400; ++i)
+            sub.rows.push_back({std::to_string(i), q.queue[i].title, (int(i) == q.current_index ? TR("Playing  ·  ", "Sonando  ·  ") : "") + q.queue[i].artists});
+        if (sub.rows.empty()) sub.rows.push_back(back_row("Nothing is playing on the console", "No suena nada en la consola"));
+        send_list(k, "NZKLOC", session_key, top, "queue", &sub);
+    } else if (album >= 0 && album < int(albums.size()))
+        song_list(std::to_string(album), albums[std::size_t(album)].title, local::cover(albums[std::size_t(album)].dir), album_songs);
+    else if (loc_artist >= 0 && loc_artist < int(loc_artists.size())) {
+        std::string art;
+        for (const auto& a : albums) if (a.artist == loc_artists[std::size_t(loc_artist)] && art.empty()) art = local::cover(a.dir);
+        song_list("r:" + std::to_string(loc_artist), loc_artists[std::size_t(loc_artist)], art, artist_songs);
+    } else send_list(k, "NZKLOC", session_key, top);
 }
 
 void KabukiUi::push_all(kabuki_client& k, bool force) {
@@ -366,11 +461,13 @@ void KabukiUi::on_shown(kabuki_client& k, const std::string& tile) {
         all_songs.clear(); // fetched again when the Songs view is next shown
         push_library(k, true);
         lib_loaded = library::top(app.bridge, lib_top);
+        covers_todo.clear();
+        for (auto it = lib_top.rbegin(); it != lib_top.rend(); ++it) // fetched from the back: the list's order
+            if (it->has_art && lib_cover(it->key).empty()) covers_todo.push_back(it->key);
         push_library(k);
     } else if (tile == "NZKLOC") {
         app.local.prune(); // files deleted since (FTP) leave the console's queue
-        albums = local::albums(); // cheap, and picks up what was copied or saved since
-        if (album >= int(albums.size())) album = -1;
+        refresh_local();    // cheap, and picks up what was copied or saved since
         push_local(k);
     }
 }
@@ -400,8 +497,14 @@ void KabukiUi::on_action(kabuki_client& k, const kabuki_event& ev) {
     } else if (tile == "NZKQUE") {
         if (action == "open" && key == "settings") settings_open = true;
         else if (action == "close") settings_open = false;
-        else if (action == "select" && key == "like") {
-            if (const Track* t = s.current()) toggle_like(*t);
+        else if (action == "select" && (key == "like" || key == "dislike")) {
+            if (const Track* t = on_console ? nullptr : s.current()) toggle_like(*t, key == "like" ? "liked" : "disliked");
+        } else if (action == "select" && key == "qmode") queue_mode = (queue_mode + 1) % 4;
+        else if (action == "select" && key == "clear") {
+            if (clear_armed && now_ms() - clear_armed < 5000) {
+                clear_armed = 0;
+                app.bridge.command("queue/clear");
+            } else clear_armed = now_ms();
         } else if (action == "select" && key == "offline") {
             if (const Track* t = s.current()) if (!on_console) offline::save_async(app.bridge, *t);
         } else if (action == "select" && key == "pair") {
@@ -412,7 +515,7 @@ void KabukiUi::on_action(kabuki_client& k, const kabuki_event& ev) {
         else if (action == "select" && key == "mode") {
             app.config.ownership = (app.config.ownership + 1) % 4;
             app.save();
-            if (app.on_ownership) app.on_ownership(app.config.ownership);
+            if (app.on_ownership) app.on_ownership(app.ownership_ctx, app.config.ownership);
         } else if (action == "select" && key == "forget") app.bridge.forget();
         else if (action == "select" && key == "quit") app.quit = true;
         else if (action == "select" && key.find('|') != std::string::npos) { // a queue row
@@ -421,13 +524,20 @@ void KabukiUi::on_action(kabuki_client& k, const kabuki_event& ev) {
             if (on_console) {
                 if (index >= 0 && index < int(s.queue.size())) app.local.play(s.queue, index);
                 kabuki_show(&k, "NZKNOW");
-            } else {
+            } else if (queue_mode == 0) {
                 busy_key = key;
                 busy_at = now_ms();
                 push_queue(k, s);
                 const int status = app.bridge.command("queue/jump", "{\"index\":" + std::to_string(index) + ",\"trackId\":" + quote(key.substr(bar + 1)) + "}");
                 busy_key.clear(); // 409: the queue changed under us; the next push shows the new one
                 if (status == 200) kabuki_show(&k, "NZKNOW");
+            } else if (queue_mode == 1) {
+                app.bridge.command("queue/remove", "{\"index\":" + std::to_string(index) + ",\"trackId\":" + quote(key.substr(bar + 1)) + "}");
+            } else { // move by one, within the queue
+                const int to = index + (queue_mode == 2 ? -1 : 1);
+                if (to >= 0 && to < int(s.queue.size()))
+                    app.bridge.command("queue/move", "{\"fromIndex\":" + std::to_string(index) + ",\"toIndex\":" + std::to_string(to) +
+                                                         ",\"trackId\":" + quote(key.substr(bar + 1)) + "}");
             }
         }
         push_queue(k, current());
@@ -445,7 +555,9 @@ void KabukiUi::on_action(kabuki_client& k, const kabuki_event& ev) {
             lib_key.clear();
             ++lib_back;
         }
-        else if (action == "select" && key == "view") {
+        else if (action == "select" && (key == "flag:save" || key == "flag:pin")) {
+            if (library::Entry* e = entry(lib_key)) library::set_flag(app.bridge, *e, key == "flag:pin", key == "flag:pin" ? !e->pinned : !e->saved);
+        } else if (action == "select" && key == "view") {
             lib_view = (lib_view + 1) % 5;
             if (lib_view == 4 && all_songs.empty()) {
                 push_library(k, true);
@@ -459,22 +571,36 @@ void KabukiUi::on_action(kabuki_client& k, const kabuki_event& ev) {
         } else if (action == "select" && !lib_key.empty()) phone_song(k, lib_key, lib_songs, std::atoi(key.c_str()));
         push_library(k);
     } else if (tile == "NZKLOC") {
-        if (action == "open" && key == "queue") { app.local.prune(); queue_open = true; album = -1; }
-        else if (action == "open") {
+        if (action == "open" && key == "queue") { app.local.prune(); queue_open = true; album = loc_artist = -1; }
+        else if (action == "open" && key.rfind("r:", 0) == 0) { // an artist: all their songs, album by album
             queue_open = false;
+            album = -1;
+            loc_artist = std::atoi(key.c_str() + 2);
+            artist_songs.clear();
+            if (loc_artist >= 0 && loc_artist < int(loc_artists.size()))
+                for (const auto& a : albums)
+                    if (a.artist == loc_artists[std::size_t(loc_artist)]) for (auto& t : local::songs(a.dir)) artist_songs.push_back(std::move(t));
+        } else if (action == "open") {
+            queue_open = false;
+            loc_artist = -1;
             album = std::atoi(key.c_str());
             album_songs = album >= 0 && album < int(albums.size()) ? local::songs(albums[std::size_t(album)].dir) : std::vector<Track>{};
-        } else if (action == "close") { album = -1; queue_open = false; }
+        } else if (action == "close") { album = loc_artist = -1; queue_open = false; }
         else if (action == "select" && key == "back") {
-            album = -1;
+            album = loc_artist = -1;
             queue_open = false;
             ++loc_back;
-            albums = local::albums();
+            refresh_local();
         } else if (action == "select" && key == "addmode") add_mode = (add_mode + 1) % 3;
-        else if (action == "select" && queue_open) {
+        else if (action == "select" && key == "view") {
+            loc_view = (loc_view + 1) % 3;
+            refresh_local();
+        } else if (action == "select" && queue_open) {
             app.local.jump(std::atoi(key.c_str()));
             kabuki_show(&k, "NZKNOW");
-        } else if (action == "select" && album >= 0) local_song(k, album_songs, std::atoi(key.c_str()));
+        } else if (action == "select" && key.rfind("s:", 0) == 0) local_song(k, loc_all, std::atoi(key.c_str() + 2)); // the songs view
+        else if (action == "select" && album >= 0) local_song(k, album_songs, std::atoi(key.c_str()));
+        else if (action == "select" && loc_artist >= 0) local_song(k, artist_songs, std::atoi(key.c_str()));
         push_local(k);
     }
 }
@@ -516,6 +642,7 @@ void KabukiUi::run() {
                 on_action(k, ev);
             } else if (got == 1 && ev.kind == KABUKI_SHOWN) on_shown(k, ev.tile);
             else if (got == 1 && ev.kind == KABUKI_ERROR) logf("UI kabuki error %s: %s (%s)", ev.code, ev.message, ev.tile);
+            else if (got == 0 && !covers_todo.empty()) fetch_cover(k); // idle: one library cover
             push_all(k, false);
         }
         kabuki_close(&k);

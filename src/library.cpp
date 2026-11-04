@@ -24,7 +24,14 @@ static void collection(Bridge& b, const char* route, const char* prefix, const c
         const std::string artists = d.str(d.get(i, "artists"));
         if (!artists.empty()) sub += "  ·  " + artists;
         sub += "  ·  " + count(int(d.num(d.get(i, "trackCount"))), TR("song", "cancion"), TR("songs", "canciones"));
-        out.push_back({prefix + id, d.str(d.get(i, name)), sub});
+        Entry e{prefix + id, d.str(d.get(i, name)), sub};
+        e.saved = d.boolean(d.get(i, "isBookmarked"));
+        e.pinned = d.boolean(d.get(i, "isPinned"));
+        e.has_art = d.boolean(d.get(i, "hasArtwork"));
+        e.art_track = d.str(d.get(i, "artworkTrackId"));
+        if (!safe_id(e.art_track)) e.art_track.clear();
+        if (prefix[0] == 'p') e.has_art = true; // a custom cover, or its track's (tried in that order)
+        out.push_back(std::move(e));
     }
 }
 
@@ -97,6 +104,27 @@ std::string album_of(Bridge& b, const Track& t) {
             if (s.str(s.get(j, "id")) == t.id) return d.str(d.get(i, "title"));
     }
     return "";
+}
+
+int set_flag(Bridge& b, Entry& e, bool pin, bool on) {
+    if (!valid(e.key) || e.key.size() < 3) return 0;
+    const std::string id = e.key.substr(2), flag = on ? "true" : "false";
+    std::string route, body;
+    if (e.key[0] == 'a') { route = "library/albums/" + id + "/bookmark"; body = "{\"bookmarked\":" + flag + "}"; }
+    else if (e.key[0] == 'r') { route = "library/artists/" + id + "/follow"; body = std::string("{\"state\":\"") + (on ? "followed" : "neutral") + "\"}"; }
+    else if (pin) { route = "library/playlists/" + id + "/pin"; body = "{\"pinned\":" + flag + "}"; }
+    else { route = "library/playlists/" + id + "/bookmark"; body = "{\"bookmarked\":" + flag + "}"; }
+    const int status = b.command(route.c_str(), body);
+    if (status == 200) (pin ? e.pinned : e.saved) = on;
+    return status;
+}
+
+bool artwork(Bridge& b, const Entry& e, int size, std::string& bytes) {
+    if (!valid(e.key) || e.key.size() < 3 || !e.has_art) return false;
+    const std::string id = e.key.substr(2), sz = "?size=" + std::to_string(size);
+    const char* kind = e.key[0] == 'a' ? "albums/" : e.key[0] == 'r' ? "artists/" : "playlists/";
+    if (b.get(std::string("library/") + kind + id + "/artwork" + (e.key[0] == 'p' ? "" : sz), bytes) == 200) return true;
+    return e.key[0] == 'p' && !e.art_track.empty() && b.get("artwork/" + e.art_track + sz, bytes) == 200;
 }
 
 int add(Bridge& b, const Track& t, bool next) {

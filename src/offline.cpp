@@ -11,14 +11,13 @@
 #include <cstring>
 #include <mutex>
 #include <pthread.h>
-#include <set>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
 namespace offline {
 static std::mutex m;
-static std::set<std::string> running;
+static std::string running; // the song being saved (one at a time), "" when none
 constexpr std::uint64_t max_bytes = 300u << 20; // no song is this big; a runaway stream is
 
 std::string clean(const std::string& name) {
@@ -59,7 +58,7 @@ bool saved(const Track& t) {
 
 bool busy(const std::string& id) {
     std::lock_guard<std::mutex> l(m);
-    return running.count(id) > 0;
+    return !running.empty() && running == id;
 }
 
 // The container, from the first bytes (the phone's Content-Type is not always precise).
@@ -130,7 +129,7 @@ static void* run(void* p) {
     }
     {
         std::lock_guard<std::mutex> l(m);
-        running.erase(job->track.id);
+        running.clear();
     }
     delete job;
     return nullptr;
@@ -141,7 +140,7 @@ void save_async(Bridge& b, const Track& t) {
         std::lock_guard<std::mutex> l(m);
         // ponytail: one download at a time keeps the Wi-Fi for the song that's playing.
         if (!running.empty() || saved(t)) return;
-        running.insert(t.id);
+        running = t.id;
     }
     pthread_attr_t a;
     pthread_attr_init(&a);
@@ -152,7 +151,7 @@ void save_async(Bridge& b, const Track& t) {
     if (pthread_create(&th, &a, run, job)) {
         delete job;
         std::lock_guard<std::mutex> l(m);
-        running.erase(t.id);
+        running.clear();
     }
     pthread_attr_destroy(&a);
 }

@@ -10,7 +10,7 @@
 #include "../library.hpp"
 #include "../local.hpp"
 #include "kabuki.h"
-#include <map>
+#include <utility>
 #include <vector>
 
 class KabukiUi {
@@ -21,7 +21,10 @@ private:
     App& app;
     struct Seen { std::uint64_t state = ~0ull, pair = ~0ull, second = 0, local = ~0ull; std::string art_id, status, extras; } seen;
     std::string art_path, busy_key;
-    std::map<std::string, bool> liked; // our own likes, until the phone's queue says so
+    std::vector<std::pair<std::string, std::string>> like_state; // our own liked/neutral/disliked, until the phone's queue says so
+    // What Cross does on a song of the phone's queue: 0 jump to it, 1 remove it, 2 move it up, 3 move it down.
+    int queue_mode = 0;
+    std::uint64_t clear_armed = 0; // "clear the queue" was pressed once, at this time: a second press clears
     std::uint64_t busy_at = 0;
     bool settings_open = false;
     // Kabuki remembers an opened sublist across our reconnects; a new session per connection (and
@@ -34,6 +37,12 @@ private:
     bool lib_loaded = false;
     std::string lib_key;
     std::vector<Track> lib_songs;
+    // Covers of the library's playlists, albums and artists: fetched one at a time between events,
+    // kept in the art folder (lib-<key>.jpg/png) for next time.
+    std::vector<std::string> covers_todo;
+    std::string lib_cover(const std::string& key);
+    void fetch_cover(kabuki_client& k);
+    library::Entry* entry(const std::string& key);
     // The top level's view, cycled by its first row: 0 everything, 1 playlists, 2 albums, 3 artists,
     // 4 all songs (playable right there, from all_songs).
     int lib_view = 0;
@@ -42,9 +51,14 @@ private:
     std::vector<local::Album> albums;
     int album = -1;
     bool queue_open = false; // the console's queue, opened from Music
+    // Music's view, cycled by its first row: 0 albums, 1 artists (one opens all their songs), 2 all songs.
+    int loc_view = 0, loc_artist = -1;
+    std::vector<std::string> loc_artists;
+    std::vector<Track> artist_songs, loc_all;
+    void refresh_local(); // albums, artists and (in the songs view) all songs, from the disk
     // What Cross does on a song (cycled by a row above the songs): 0 play from it, 1 play next, 2 add at the end.
     int add_mode = 0;
-    std::string mode_row();
+    struct Row mode_row();
     void phone_song(kabuki_client& k, const std::string& list, const std::vector<Track>& songs, int index);
     void local_song(kabuki_client& k, const std::vector<Track>& songs, int index);
     std::vector<Track> album_songs;
@@ -55,10 +69,11 @@ private:
     void push_queue(kabuki_client& k, const PlayerState& s);
     void push_library(kabuki_client& k, bool loading = false);
     void push_local(kabuki_client& k);
-    std::string settings_rows(const PlayerState& s);
+    std::vector<struct Row> settings_rows();
     std::string offline_row(const PlayerState& s);
-    bool is_liked(const Track& t);
-    void toggle_like(const Track& t);
+    std::string like_of(const Track& t);
+    bool is_liked(const Track& t) { return like_of(t) == "liked"; }
+    void toggle_like(const Track& t, const char* state); // "liked" or "disliked", back to "neutral" when already so
     const char* offline_title(const Track& t);
     void on_action(kabuki_client& k, const kabuki_event& ev);
     void on_shown(kabuki_client& k, const std::string& tile);

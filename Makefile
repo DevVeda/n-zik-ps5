@@ -44,12 +44,12 @@ $(B)/test-decoder: tools/test_decoder.cpp src/audio/decoder.cpp src/net.cpp
 # ---- console ----
 PCC   := $(SDK)/bin/prospero-clang
 PCXX  := $(SDK)/bin/prospero-clang++
-PXX   := -O2 -fPIC $(WARN) $(CXXSTD) -fno-exceptions -fno-rtti -fno-threadsafe-statics -I$(TP) -I$(TP)/shellui-loader -Isrc
+PXX   := -Os -fPIC $(WARN) $(CXXSTD) -fno-exceptions -fno-rtti -fno-threadsafe-statics -I$(TP) -I$(TP)/shellui-loader -Isrc
 LOADER := $(B)/ps5/pt.o $(B)/ps5/loader.o $(B)/ps5/injector.o $(B)/ps5/remote_call.o $(B)/ps5/worker-blob.o $(B)/ps5/host.o
 
 $(B)/ps5/worker.elf: src/shell/worker.cpp src/shell/protocol.hpp
 	@mkdir -p $(B)/ps5
-	$(PCXX) $(PXX) -Wframe-larger-than=16384 -shared -Wl,-e,elf_main -Wl,-Bsymbolic -Wl,--hash-style=sysv $< -lkernel_sys -lSceLibcInternal -o $@
+	$(PCXX) $(PXX) -O2 -Wframe-larger-than=16384 -shared -Wl,-e,elf_main -Wl,-Bsymbolic -Wl,--hash-style=sysv $< -lkernel_sys -lSceLibcInternal -o $@
 $(B)/ps5/worker-blob.c: $(B)/ps5/worker.elf
 	python3 tools/embed.py $< worker_blob $@
 $(B)/ps5/worker-blob.o: $(B)/ps5/worker-blob.c
@@ -72,7 +72,7 @@ $(B)/n-zik-ps5.elf: $(COMMON) src/audio/shell_sink.cpp $(wildcard src/*.hpp src/
 	$(PCC) -O2 -c $(TP)/qrcodegen.c -o $(B)/ps5/qrcodegen.o
 	$(PCXX) $(PXX) -I$(FF)/include $(COMMON) src/audio/shell_sink.cpp $(B)/ps5/qrcodegen.o $(LOADER) \
 	  $(FF)/lib/libavformat.a $(FF)/lib/libavcodec.a $(FF)/lib/libswresample.a $(FF)/lib/libavutil.a \
-	  -lkernel_sys -lSceLibcInternal -lSceNet -lSceRandom -lSceSystemService -lc++ -lc++abi -Wl,--gc-sections -o $@
+	  -lkernel_sys -lSceLibcInternal -lSceNet -lSceRandom -lSceSystemService -lc++ -lc++abi -Wl,--gc-sections -Wl,--icf=safe -o $@
 	$(SDK)/bin/prospero-strip --strip-all $@ # payloads much over 2 MiB fail to start
 	@ls -la $@
 $(FF)/lib/libavformat.a:

@@ -14,7 +14,7 @@ struct Track {
     std::string id, title, artists;
     long long duration_ms = -1;
     bool has_art = false;
-    bool liked = false;
+    bool liked = false, disliked = false;
 };
 
 struct PlayerState {

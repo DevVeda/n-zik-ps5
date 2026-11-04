@@ -5,7 +5,6 @@
 #include "config.hpp"
 #include "player.hpp"
 #include <atomic>
-#include <functional>
 #include <mutex>
 #include <string>
 
@@ -31,7 +30,8 @@ struct App {
     std::atomic<bool> quit{false};
     std::atomic<bool> pair_requested{false};
     std::string audio_info; // firmware/worker summary for the settings tile
-    std::function<void(int)> on_ownership; // the audio mode changed (PS5 build restarts its sink)
+    void (*on_ownership)(void* ctx, int mode) = nullptr; // the audio mode changed (PS5 build restarts its sink)
+    void* ownership_ctx = nullptr;
 
     std::mutex m;
     std::string pair_status; // "" when not pairing

@@ -25,6 +25,8 @@ class MockPhone:
     def __init__(self, tracks, port=42420, code='123456'):
         # tracks: list of dicts {id, title, artists, durationMs, path, art}
         self.tracks = tracks
+        self.queue = list(tracks)  # the phone's queue; `tracks` stays the library
+        self.flags = {}  # library writes: route -> body
         self.port = port
         self.code = code
         self.token = 'tok-' + os.urandom(8).hex()
@@ -93,7 +95,14 @@ class MockPhone:
                         return self.send_json(200, page(tracks))
                     if route == 'albums':  # song1 is on an album; the others are singles
                         return self.send_json(200, page([{'id': 'al1', 'title': phone.album_title, 'artists': phone.album_artist, 'year': None,
-                                                          'trackCount': 1, 'hasArtwork': False}]))
+                                                          'trackCount': 1, 'hasArtwork': True}]))
+                    if route == 'albums/al1/artwork':
+                        data = open(phone.tracks[0]['art'], 'rb').read()
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/jpeg')
+                        self.send_header('Content-Length', str(len(data)))
+                        self.end_headers()
+                        return self.wfile.write(data)
                     if route == 'albums/al1/songs':
                         return self.send_json(200, page(tracks[:1]))
                     if route == 'artists':
@@ -211,6 +220,19 @@ class MockPhone:
                 if b['action'] != 'play' or b['list'] not in ({'kind': 'playlist', 'id': '7'}, {'kind': 'songs', 'filter': 'all'}):
                     return False
                 self.index = int(b['startIndex']); self.set_pos(0); self.playing = True; self.delta_track()
+            elif route in ('queue/remove', 'queue/move'):
+                i = int(b.get('index', b.get('fromIndex', -1)))
+                if not 0 <= i < len(self.queue) or self.queue[i]['id'] != b['trackId']:
+                    return False
+                t = self.queue.pop(i)
+                if route == 'queue/move':
+                    self.queue.insert(max(0, min(len(self.queue), int(b['toIndex']))), t)
+                self.delta_queue()
+            elif route == 'queue/clear':
+                self.queue = []
+                self.delta_queue()
+            elif route.startswith('library/') and route.rsplit('/', 1)[1] in ('bookmark', 'follow', 'pin'):
+                self.flags[route] = b
             elif route == 'queue/jump':
                 i = int(b['index'])
                 if self.tracks[i]['id'] != b['trackId']:
@@ -300,7 +322,7 @@ class MockPhone:
 
     def send_snapshot(self, sock):
         t = self.tracks[self.index]
-        self.raw(sock, {'type': 'snapshot', 'revision': self.revision, 'serverTimeMs': now_ms(), 'queue': [self.dto(x) for x in self.tracks],
+        self.raw(sock, {'type': 'snapshot', 'revision': self.revision, 'serverTimeMs': now_ms(), 'queue': [self.dto(x) for x in self.queue],
                         'currentIndex': self.index, 'currentTrackId': t['id'], 'isPlaying': self.playing, 'isBuffering': False,
                         'durationMs': t['durationMs'], 'speed': 1.0, 'positionMs': self.pos(), 'repeatMode': self.repeat,
                         'shuffle': self.shuffle, 'audioOutput': self.output})
@@ -313,6 +335,11 @@ class MockPhone:
         t = self.tracks[self.index]
         self.send({'type': 'trackChanged', 'currentIndex': self.index, 'currentTrackId': t['id'], 'positionMs': 0, 'isPlaying': self.playing,
                    'durationMs': t['durationMs']})
+
+    def delta_queue(self):
+        cur = self.tracks[self.index]['id']
+        at = next((i for i, t in enumerate(self.queue) if t['id'] == cur), -1)
+        self.send({'type': 'queueChanged', 'queue': [self.dto(x) for x in self.queue], 'currentIndex': at, 'currentTrackId': cur if at >= 0 else ''})
 
     def delta_modes(self):
         self.send({'type': 'modesChanged', 'repeatMode': self.repeat, 'shuffle': self.shuffle})

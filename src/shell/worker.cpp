@@ -246,13 +246,16 @@ extern "C" __attribute__((visibility("default"))) void* elf_main(void*) {
     status.token = request.token;
     note("READY token=%016llx", (unsigned long long)request.token);
     alignas(64) static std::int16_t pcm[grain * 2];
-    std::uint64_t checked = 0, published = 0, frames = 0, start_ms = 0;
+    std::uint64_t checked = 0, published = 0, frames = 0, start_ms = 0, seen = now_ms();
     for (;;) {
         const auto now = now_ms();
         if (now - checked >= 100) {
             checked = now;
             Heartbeat h;
-            if (!read_file(worker_dir, "heartbeat.bin", h) || h.token != request.token || now > h.at_ms + 3000) {
+            // ponytail: a hiccup (busy console, a failed read) must not kill the audio for good:
+            // only 10 s without a fresh heartbeat means the host is gone.
+            if (read_file(worker_dir, "heartbeat.bin", h) && h.token == request.token && now <= h.at_ms + 3000) seen = now;
+            else if (now - seen > 10000) {
                 stop_all();
                 note("HOST gone; idle");
                 write_file(worker_dir, "status.bin", status);

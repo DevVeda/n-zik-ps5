@@ -4,7 +4,6 @@
 #pragma once
 #include "bridge.hpp"
 #include "net.hpp"
-#include <functional>
 #include <string>
 
 namespace pairing {
@@ -17,9 +16,9 @@ bool make_qr(const std::string& request_id, const std::string& device_name, cons
 std::string new_request_id(); // 22 chars of base64url
 // Waits up to timeout_ms for the phone's offer on `l`, then validates it.
 // true: `out` holds a working pairing. `status` says what happened (for the UI).
-// Gives up early (false, empty status) once *cancel is true.
+// Gives up early (false, empty status) once cancel(ctx) says so.
 bool wait_for_phone(net::Listener& l, const std::string& request_id, const std::string& device_name, int timeout_ms, Pairing& out, std::string& status,
-                    const std::function<bool()>& cancel);
+                    bool (*cancel)(void* ctx), void* ctx);
 // Minimal grayscale PNG (stored deflate, no zlib).
 bool write_png(const char* path, const unsigned char* gray, int width, int height);
 }

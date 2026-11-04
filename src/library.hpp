@@ -10,7 +10,16 @@ namespace library {
 struct Entry {
     std::string key, title, subtitle;
     bool opens = true;
+    bool saved = false;  // album / playlist bookmarked, artist followed
+    bool pinned = false; // playlist pinned
+    bool has_art = false;
+    std::string art_track; // a playlist's cover comes from this track when it has no custom one
 };
+// Saves / follows (`pin` false) or pins (`pin` true, playlists) an entry, or undoes it. Updates `e`.
+// Returns the HTTP status.
+int set_flag(Bridge& b, Entry& e, bool pin, bool on);
+// An entry's cover (JPEG or PNG bytes) at `size` px.
+bool artwork(Bridge& b, const Entry& e, int size, std::string& bytes);
 // The top level: the fixed lists, then playlists, albums and artists (first page of each).
 // false when the phone didn't answer.
 bool top(Bridge& b, std::vector<Entry>& out);

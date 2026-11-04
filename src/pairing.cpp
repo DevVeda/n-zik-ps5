@@ -118,14 +118,14 @@ int open_listener(net::Listener& l) {
 }
 
 bool wait_for_phone(net::Listener& l, const std::string& request_id, const std::string& device_name, int timeout_ms, Pairing& out, std::string& status,
-                    const std::function<bool()>& cancel) {
+                    bool (*cancel)(void* ctx), void* ctx) {
     timespec start{};
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (;;) {
         timespec t{};
         clock_gettime(CLOCK_MONOTONIC, &t);
         const long elapsed = long(t.tv_sec - start.tv_sec) * 1000 + (t.tv_nsec - start.tv_nsec) / 1000000;
-        if (elapsed >= timeout_ms || cancel()) return false;
+        if (elapsed >= timeout_ms || cancel(ctx)) return false;
         const int c = l.accept_one(int(std::min<long>(1000, timeout_ms - elapsed)));
         if (c < 0) continue;
         std::string method, path, body;

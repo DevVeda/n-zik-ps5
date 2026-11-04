@@ -67,8 +67,12 @@ struct PairingThread {
             logf("PAIR qr %s", text.c_str());
             app->set_pairing_screen(TR("Scan with N-Zik (", "Escanea con N-Zik (") + ip + ")", paths::qr);
             Pairing p;
-            const auto cancel = [&] { return app->quit || app->pair_requested || (!asked && app->bridge.paired() && !app->bridge.lost); };
-            if (pairing::wait_for_phone(listener, id, app->config.device_name, 180000, p, status, cancel)) {
+            struct Wait { App* app; bool asked; } wait{app, asked};
+            const auto cancel = [](void* c) {
+                const Wait& w = *static_cast<Wait*>(c);
+                return w.app->quit || w.app->pair_requested || (!w.asked && w.app->bridge.paired() && !w.app->bridge.lost);
+            };
+            if (pairing::wait_for_phone(listener, id, app->config.device_name, 180000, p, status, cancel, &wait)) {
                 app->bridge.set_pairing(p);
                 notify("N-Zik: %s", status.c_str());
                 app->set_pairing_screen(status, "");
@@ -146,7 +150,8 @@ int main(int argc, char** argv) {
     app.config = config;
     app.audio_info = info;
 #ifdef __PROSPERO__
-    app.on_ownership = [&sink](int o) { sink.set_ownership(o ? o : shell::Source); };
+    app.on_ownership = [](void* s, int o) { static_cast<audio::ShellSink*>(s)->set_ownership(o ? o : shell::Source); };
+    app.ownership_ctx = &sink;
 #endif
 
     spawn(BridgeThread::body, &app);

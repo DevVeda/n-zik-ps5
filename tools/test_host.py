@@ -100,7 +100,7 @@ def main():
         wait('now playing', lambda: kabuki.tile('NZKNOW').get('title') == 'Cancion 1' and kabuki.tile('NZKNOW').get('playing'))
         wait('cover', lambda: (kabuki.tile('NZKNOW').get('art') or '').endswith('.jpg'))
         rows = kabuki.tile('NZKQUE')['top']['rows']
-        assert [r['key'] for r in rows] == ['like', 'offline', 'settings', '0|song1', '1|song2', '2|edge'], rows
+        assert [r['key'] for r in rows] == ['like', 'dislike', 'offline', 'settings', 'qmode', '0|song1', '1|song2', '2|edge'], rows
         wait('decoder opus', lambda: logged(r'DECODER opus'))
         time.sleep(2)
 
@@ -125,6 +125,9 @@ def main():
         kabuki.act('NZKQUE', 'select', key='like')
         wait('like', lambda: ('library/songs/song1/like', {'state': 'liked'}) in phone.commands)
         wait('like shown', lambda: kabuki.tile('NZKQUE')['top']['rows'][0]['title'].startswith('Te gusta'))
+        kabuki.act('NZKQUE', 'select', key='dislike')
+        wait('dislike', lambda: ('library/songs/song1/like', {'state': 'disliked'}) in phone.commands)
+        wait('dislike shown', lambda: kabuki.tile('NZKQUE')['top']['rows'][1]['title'].startswith('No te gusta'))
         kabuki.act('NZKNOW', 'shuffle', value=1)
         wait('shuffle', lambda: phone.shuffle)
         time.sleep(1.5)
@@ -135,13 +138,19 @@ def main():
         wait('offline file', lambda: os.path.exists(saved))
         assert open(saved, 'rb').read() == open(tracks[0]['path'], 'rb').read()
         wait('offline cover', lambda: os.path.exists(f'{data}/music/Artista/Album Uno/cover.jpg'))
-        wait('offline shown', lambda: kabuki.tile('NZKQUE')['top']['rows'][1]['title'] == 'Guardada offline')
+        wait('offline shown', lambda: kabuki.tile('NZKQUE')['top']['rows'][2]['title'] == 'Guardada offline')
 
         # 6. Explorar: the phone's library; a playlist plays from the chosen song.
         kabuki.shown('NZKLIB')
         wait('library', lambda: any(r['key'] == 'p:7' for r in kabuki.tile('NZKLIB').get('top', {}).get('rows', [])))
         kabuki.act('NZKLIB', 'open', key='p:7')
-        wait('playlist songs', lambda: len((kabuki.tile('NZKLIB').get('sub') or {}).get('rows', [])) == 5)  # mode + Aleatorio + 3
+        wait('playlist songs', lambda: len((kabuki.tile('NZKLIB').get('sub') or {}).get('rows', [])) == 7)  # save + pin + mode + Aleatorio + 3
+        kabuki.act('NZKLIB', 'select', key='flag:save')
+        wait('playlist saved', lambda: phone.flags.get('library/playlists/7/bookmark') == {'bookmarked': True})
+        wait('saved shown', lambda: kabuki.tile('NZKLIB')['sub']['rows'][0]['title'].startswith('Playlist guardada'))
+        # The library's covers come in between events, and stay on disk.
+        wait('album cover', lambda: os.path.exists(f'{data}/art/lib-a_al1.jpg'))
+        wait('album cover shown', lambda: any((r.get('art') or '').endswith('lib-a_al1.jpg') for r in kabuki.tile('NZKLIB')['top']['rows']))
         kabuki.act('NZKLIB', 'select', key='1')
         wait('queue/list', lambda: phone.index == 1 and any(c[0] == 'queue/list' for c in phone.commands))
         kabuki.act('NZKLIB', 'close')
@@ -169,8 +178,18 @@ def main():
 
         # 7. Musica: the saved song plays from the console; the phone pauses, then takes over again.
         kabuki.shown('NZKLOC')
-        wait('local albums', lambda: [r['title'] for r in kabuki.tile('NZKLOC')['top']['rows']] == ['Album Uno'])
-        assert kabuki.tile('NZKLOC')['top']['rows'][0]['art'].endswith('/music/Artista/Album Uno/cover.jpg')
+        wait('local albums', lambda: [r['title'] for r in kabuki.tile('NZKLOC')['top']['rows']] == ['Ver: Albumes', 'Album Uno'])
+        assert kabuki.tile('NZKLOC')['top']['rows'][1]['art'].endswith('/music/Artista/Album Uno/cover.jpg')
+        # The view row: artists (one opens all their songs), then every song, then back to albums.
+        kabuki.act('NZKLOC', 'select', key='view')
+        wait('artists view', lambda: [r['key'] for r in kabuki.tile('NZKLOC')['top']['rows']] == ['view', 'r:0'])
+        kabuki.act('NZKLOC', 'open', key='r:0')
+        wait('artist songs', lambda: [r['title'] for r in (kabuki.tile('NZKLOC').get('sub') or {}).get('rows', [])] == ['✕: Reproducir', 'Cancion 1'])
+        kabuki.act('NZKLOC', 'close')
+        kabuki.act('NZKLOC', 'select', key='view')
+        wait('songs view', lambda: [r['key'] for r in kabuki.tile('NZKLOC')['top']['rows']] == ['view', 'addmode', 's:0'])
+        kabuki.act('NZKLOC', 'select', key='view')
+        wait('albums view', lambda: [r['key'] for r in kabuki.tile('NZKLOC')['top']['rows']] == ['view', '0'])
         kabuki.act('NZKLOC', 'open', key='0')
         wait('local songs', lambda: [r['title'] for r in (kabuki.tile('NZKLOC').get('sub') or {}).get('rows', [])] == ['✕: Reproducir', 'Cancion 1'])
         kabuki.act('NZKLOC', 'select', key='0')
@@ -212,6 +231,23 @@ def main():
         wait('pruned', lambda: kabuki.tile('NZKLOC')['top']['rows'][0]['subtitle'].startswith('2 canciones'))
         phone.user_play()
         wait('phone again', lambda: not kabuki.tile('NZKNOW').get('note', '').startswith('En la consola'))
+
+        # Editing the phone's queue: the mode row picks what Cross does on a song.
+        kabuki.act('NZKQUE', 'select', key='qmode')  # Remove it
+        kabuki.act('NZKQUE', 'select', key='2|edge')
+        wait('removed', lambda: [t['id'] for t in phone.queue] == ['song1', 'song2'])
+        kabuki.act('NZKQUE', 'select', key='qmode')  # Move it up
+        kabuki.act('NZKQUE', 'select', key='1|song2')
+        wait('moved up', lambda: [t['id'] for t in phone.queue] == ['song2', 'song1'])
+        kabuki.act('NZKQUE', 'select', key='qmode')
+        kabuki.act('NZKQUE', 'select', key='qmode')  # back to Jump
+        kabuki.act('NZKQUE', 'open', key='settings')
+        kabuki.act('NZKQUE', 'select', key='clear')
+        time.sleep(0.5)
+        assert phone.queue, 'one press must not clear the queue'
+        kabuki.act('NZKQUE', 'select', key='clear')
+        wait('cleared', lambda: phone.queue == [])
+        kabuki.act('NZKQUE', 'close')
 
         # 8. A second copy (the Payload Manager launched twice) makes the first one step aside.
         second = subprocess.Popen([f'{ROOT}/build/n-zik-host', data, f'{tmp}/out2.wav'], stderr=subprocess.DEVNULL)
