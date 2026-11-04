@@ -1,6 +1,6 @@
 # N-Zik PS5
 
-**A companion app for [N-Zik](https://github.com/N-Zik-Group/N-Zik): listen to your N-Zik music on a jailbroken PS5 while you play.**
+**PS5 homebrew companion app for [N-Zik](https://github.com/N-Zik-Group/N-Zik): listen to your N-Zik (YouTube Music) library on a jailbroken PS5 while you play.**
 
 Your phone stays in charge (queue, library, search); the PS5 becomes its speaker. You control it from the phone or from the [Kabuki](https://github.com/stupiditytries/kabuki-ps5) overlay (L3 + R3), on top of any game. It also plays music saved on the console.
 
@@ -8,7 +8,7 @@ Your phone stays in charge (queue, library, search); the PS5 becomes its speaker
 
 <p align="center"><sub>Sample songs and artists, made up for these screenshots.</sub></p>
 
-<p align="center">< href="https://ko-fi.com/DevVeda"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a></p>
+<p align="center"><a href="https://ko-fi.com/DevVeda"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a></p>
 
 *[Español más abajo](#español).*
 
@@ -85,7 +85,7 @@ GPL-3.0-or-later. See [LICENSE](LICENSE). Bundled software is listed in [THIRD_P
 
 ## Español
 
-**Una app complementaria para [N-Zik](https://github.com/N-Zik-Group/N-Zik): escucha tu música de N-Zik en un PS5 con jailbreak mientras juegas.**
+**App homebrew para PS5, complementaria de [N-Zik](https://github.com/N-Zik-Group/N-Zik): escucha tu biblioteca de N-Zik (YouTube Music) en un PS5 con jailbreak (jailbroken) mientras juegas.**
 
 El teléfono sigue mandando (cola, biblioteca, búsqueda); el PS5 hace de altavoz. Lo controlas desde el teléfono o desde el overlay de [Kabuki](https://github.com/stupiditytries/kabuki-ps5) (L3 + R3), encima de cualquier juego. También reproduce música guardada en la consola.
 

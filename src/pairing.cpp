@@ -5,6 +5,7 @@
 #include "log.hpp"
 #include "net.hpp"
 #include "qrcodegen.h"
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
